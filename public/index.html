@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Humanizer — rewrite text with a human voice</title>
+  <meta name="description" content="Rephrase text into varied, natural, human-sounding prose." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="masthead">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true">
+          <span class="brand__dot"></span>
+        </span>
+        <span class="brand__word">Humanizer</span>
+      </div>
+      <div class="masthead__right">
+        <p class="tagline">Machine text in, a human voice out.</p>
+        <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle dark mode">
+          <span class="theme-toggle__icon" aria-hidden="true"></span>
+        </button>
+      </div>
+    </header>
+
+    <main class="workbench">
+      <!-- Source panel -->
+      <section class="panel panel--source" aria-labelledby="source-label">
+        <div class="panel__head">
+          <h2 class="panel__title" id="source-label">
+            <span class="panel__eyebrow">01</span> Source
+          </h2>
+          <span class="counts" id="sourceCounts" aria-live="polite">0 words · 0 chars</span>
+        </div>
+        <textarea
+          id="sourceText"
+          class="editor"
+          placeholder="Paste the text you want to rephrase…"
+          spellcheck="true"
+          autofocus
+        ></textarea>
+      </section>
+
+      <!-- Transform control -->
+      <div class="transform">
+        <button id="humanizeBtn" class="humanize-btn" type="button">
+          <span class="humanize-btn__label">Humanize</span>
+          <span class="humanize-btn__arrow" aria-hidden="true">→</span>
+          <span class="humanize-btn__spinner" aria-hidden="true"></span>
+        </button>
+        <p class="transform__meta" id="statusLine">temp&nbsp;0.45 · varied&nbsp;structure · no&nbsp;repeats</p>
+      </div>
+
+      <!-- Output panel -->
+      <section class="panel panel--output" aria-labelledby="output-label">
+        <div class="panel__head">
+          <h2 class="panel__title" id="output-label">
+            <span class="panel__eyebrow">02</span> Humanized
+          </h2>
+          <div class="panel__head-actions">
+            <span class="counts" id="outputCounts" aria-live="polite">0 words · 0 chars</span>
+            <button id="copyBtn" class="copy-btn" type="button" disabled>Copy</button>
+          </div>
+        </div>
+        <div id="outputText" class="editor editor--output" aria-live="polite">
+          <p class="placeholder">Your rewritten text will appear here — same meaning, freshened phrasing, varied rhythm.</p>
+        </div>
+      </section>
+    </main>
+
+    <div id="errorBanner" class="error-banner" role="alert" hidden></div>
+
+    <footer class="colophon">
+      <span>Powered by HuggingFace · <code>Qwen2.5-7B-Instruct</code></span>
+      <span>Low temperature, high variety — a study in controlled sampling.</span>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
