@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 3000;
 const HF_TOKEN = (process.env.HF_TOKEN || process.env.HUGGINGFACE_API_KEY || "").trim();
 const HF_BASE_URL = "https://router.huggingface.co/v1";
 const MODEL = "Qwen/Qwen2.5-7B-Instruct"; // any text-generation model on the HF router
-const REQUEST_TIMEOUT_MS = 90000; // guard against a hung upstream request
+const REQUEST_TIMEOUT_MS = 120000; // per pass — full chain runs up to 4 sequential calls
 
 // Sampling constants. Temperature stays below 0.5 per the project constraint;
 // the penalties + system prompt are what actually push the model away from
@@ -26,46 +26,95 @@ const SAMPLING = {
 
 const MAX_INPUT_CHARS = 6000;
 
-// A sample of the target writing style. The rewriter should MATCH this
-// register and rhythm (formal academic prose), not copy its content.
-const STYLE_SAMPLE = [
-  "With the rapid increase in the world's population, electricity demand also increases. It is estimated that total energy demand at the end of 2020 will increase by 75% as compared to 2000 [1]. This increase may force utilities to rethink electricity generation and distribution in order to avoid unprecedented energy challenges. The utilities thus struggle to fulfill and manage the energy demand with smart generation with reduced carbon emissions. For this purpose, the traditional electric grid is evolving to a new smart grid (SG) [2]. In SG, advanced information and communication technologies provide flexibility to interact customers with utility [3,4]. Advanced metering infrastructure (AMI) equips each customer with smart meter whose major function is to gather energy demand information at customer premises and upload to the utility server [5]. According to [6,7], SG allows integration of renewable and distributed energy generation to diminish the effects of CO2 on environment and to reduce the energy consumption.",
-  "",
-  "Demand side management (DSM) is one of the key programs of SG to efficiently manage the energy demand of end users via real time information exchange between utility and consumer through AMI. These programs aim at enhancing grid reliability by reducing average peak load demand. So, utilities and customers can manage the energy generation and consumption through the implementation of DSM programs by providing incentives or encouraging the customers to participate in energy management programs. End users can take monitory benefits by shifting peak load during off peak hours by adopting different scheduling techniques.",
+// Shared constraints applied across every pass in the chain.
+const BASE_RULES = [
+  "Preserve the meaning, facts, technical terminology, and language of the original.",
+  "Keep every citation marker (for example [1], [2], [3,4]), acronym, and defined term exactly as written.",
+  "Do NOT add, invent, or imitate citation markers or bracketed reference numbers unless they already appear in the input.",
+  "Maintain correct grammar and punctuation. Do NOT insert sentence fragments, comma splices, or deliberate errors.",
+  "NEVER use em dashes or en dashes (the '—' and '–' characters). Use a comma, colon, semicolon, or parentheses instead.",
+  "Output ONLY the rewritten text — no pass labels, commentary, quotation wrappers, or explanations.",
 ].join("\n");
 
-const SYSTEM_PROMPT = [
-  "You are an expert academic editor. Rewrite the user's text as formal, scholarly academic prose.",
-  "Preserve the meaning, facts, technical terminology, and the language of the original. Keep every citation marker (for example [1], [2], [3,4]), acronym, and defined term (for example SG, AMI, DSM, PAR, CO2) exactly as written.",
-  "CRITICAL: Do NOT add, invent, or imitate any citation markers, reference numbers, or bracketed numbers such as [1] or [2]. Use them ONLY if they already appear in the user's text. The style reference below contains citations; those belong to its content, so never copy or fabricate them.",
-  "",
-  "STYLE REFERENCE. Match the register, rhythm, formality, and academic voice of the passage below. Do NOT reuse its subject matter or copy its sentences; only emulate how it is written:",
-  "-----",
-  STYLE_SAMPLE,
-  "-----",
-  "",
-  "Rules:",
-  "",
-  "1. Maintain a formal, objective, third-person academic tone throughout. No contractions, no slang, no casual asides, no first-person opinions, no rhetorical questions, no exclamations.",
-  "",
-  "2. Use precise, discipline-appropriate vocabulary. Prefer the exact technical term over a vague or informal substitute.",
-  "",
-  "3. Vary sentence length and construction so the writing does not read as machine-uniform: alternate concise declarative sentences with longer, complex or compound sentences, and vary how sentences open. Every sentence must be grammatically complete and correct.",
-  "",
-  "4. Do not repeat the same word, connective, or phrase. Vary transitions (for example 'however', 'moreover', 'consequently', 'in addition', 'as a result') and do not lean on any single one.",
-  "",
-  "5. Avoid clichés and stock AI phrasing ('in today's world', 'it is important to note', 'delve', 'a testament to', 'plays a crucial role', 'in conclusion').",
-  "",
-  "6. Keep the writing specific and substantive. Do not pad with generic filler or empty generalisations.",
-  "",
-  "7. Maintain correct, formal grammar and punctuation. Do NOT insert sentence fragments, comma splices, or deliberate errors.",
-  "",
-  "8. NEVER use em dashes or en dashes (the '—' and '–' characters). Use a comma, colon, semicolon, or parentheses instead.",
-  "",
-  "9. Preserve the paragraph structure of the source unless a change clearly improves clarity.",
-  "",
-  "Do not add headings, commentary, quotation marks, or explanations. Output ONLY the rewritten text.",
-].join("\n");
+// 4-pass sequential humanizer chain. Each pass rewrites the previous pass output.
+const HUMANIZER_CHAIN = [
+  {
+    id: 1,
+    name: "Vocabulary & Perplexity",
+    includePenalties: true,
+    prompt: [
+      "PASS 1 OF 4 — VOCABULARY AND PERPLEXITY.",
+      "Rewrite the input to raise lexical unpredictability and eliminate repetitive, high-probability AI phrasing.",
+      "",
+      BASE_RULES,
+      "",
+      "Pass 1 focus:",
+      "• Unpredictable word choice: replace predictable, high-probability word patterns with varied, natural human choices.",
+      "• Vocabulary variety: eliminate repetitive adjectives, verbs, and stock phrasing — no word or connective should appear twice if a natural synonym exists.",
+      "• Ban stock AI vocabulary: delve, underscore, leverage, utilize, facilitate, robust, comprehensive, pivotal, crucial, vital, paramount, nuanced, multifaceted, intricate, groundbreaking, transformative, innovative, seamless, holistic, overarching, landscape, tapestry, realm, paradigm, synergy, plethora, myriad, a testament to, plays a crucial role, serves as, sheds light on, in today's world, at its core, it is important to note.",
+      "• Replace heavy adjectives (significant, substantial, remarkable, profound, extensive, considerable, notable, compelling, dynamic, cutting-edge) with simple, precise words — or drop them.",
+      "• Ban overused AI transitions: furthermore, moreover, additionally, consequently, subsequently, notably, importantly, significantly, indeed, thus, hence, in addition, as a result, on the other hand, that said, it is worth noting, in this regard, to that end, ultimately, overall, in summary, in conclusion.",
+      "• Prefer plain verbs (use, help, show, build) over ornate ones (utilize, facilitate, underscore).",
+      "• Keep paragraph count and order stable in this pass — focus on words, not layout.",
+    ].join("\n"),
+  },
+  {
+    id: 2,
+    name: "Sentence Structure & Burstiness",
+    includePenalties: true,
+    prompt: [
+      "PASS 2 OF 4 — SENTENCE STRUCTURE AND BURSTINESS.",
+      "Rewrite the input to break mechanical sentence patterns and create high rhythmic contrast.",
+      "",
+      BASE_RULES,
+      "",
+      "Pass 2 focus:",
+      "• Structural variety: break repetitive grammatical patterns (Subject-Verb-Object loops, identical openers, parallel 'X does…, Y enables…, Z provides…' templates).",
+      "• High burstiness: mix punchy short sentences (3–6 words) with standard medium sentences (13–22 words) and complex longer sentences (23+ words).",
+      "• Never let three or more consecutive sentences stay in the same length band.",
+      "• Vary how sentences open: subject-first, prepositional phrase, dependent clause, participial phrase, concrete detail.",
+      "• Short sentences must remain grammatically complete — not fragments.",
+      "• Connect sentences directly when possible; use only simple connectors (but, and, so, yet, still, also, then, because, while, when) when genuinely needed.",
+      "• Do not reshape paragraphs yet — focus on sentence-level rhythm.",
+    ].join("\n"),
+  },
+  {
+    id: 3,
+    name: "Tone, Voice & Personal Depth",
+    includePenalties: false,
+    prompt: [
+      "PASS 3 OF 4 — TONE, VOICE, AND PERSONAL DEPTH.",
+      "Rewrite the input so it reads like a knowledgeable peer explaining a concept directly to a colleague.",
+      "",
+      BASE_RULES,
+      "",
+      "Pass 3 focus:",
+      "• Dynamic tone: shift away from an overly formal, flat academic posture into an approachable, peer-to-peer voice. Use relaxed phrasing where it fits. Occasional contractions (it's, don't, won't, can't) are fine when natural. Direct address ('you', 'we') is acceptable where it clarifies.",
+      "• Personal perspective: inject realistic human uncertainty and hedging where judgment or uncertainty exists (arguably, it seems that, often, tends to, in most cases, usually, likely, may, appears to, is generally). Express a readable point of view — not a completely neutral encyclopedia observer.",
+      "• Deep explanations: eliminate broad, generic textbook-style summaries ('X is a process that…', 'Y refers to…'). Ground concepts in sharp, practical, real-world context drawn from the source. Prefer specific scenarios and mechanisms over abstract overview. Do not invent new facts or statistics.",
+      "• Stay credible: no slang, hype, exclamations, or rhetorical filler.",
+      "• Preserve the source's ideas and logical order.",
+    ].join("\n"),
+  },
+  {
+    id: 4,
+    name: "Layout & Natural Imperfection",
+    includePenalties: false,
+    prompt: [
+      "PASS 4 OF 4 — LAYOUT AND NATURAL IMPERFECTION.",
+      "This is the final pass. Polish the input into naturally imperfect, human-scannable prose.",
+      "",
+      BASE_RULES,
+      "",
+      "Pass 4 focus:",
+      "• Organic asymmetry: allow subtle stylistic variations rather than hyper-polished, robotic perfection. Vary how ideas are introduced. Allow brief parenthetical side-thoughts and minor phrasing shifts between sections.",
+      "• Paragraph diversity: break uniform paragraph sizes. Mix single-sentence impact lines with short two-to-three-sentence blocks and longer dense paragraphs. Never place two or more consecutive paragraphs of similar word count. Split dense blocks at thought shifts; merge tiny uniform ones and leave one standing alone for punch.",
+      "• Understated formatting: avoid mechanical formatting templates. Use bold text, headers, and bullet points sparingly and only if the source already uses them. Prefer flowing prose. Never produce symmetrical outlines, mirrored section headers, or repeated bold-lede bullet patterns ('**Term**: definition' × N). Flatten over-structured source material into natural paragraphs.",
+      "• Do not sanitize into unnatural perfection — imperfect flow is a feature as long as grammar and meaning stay clear.",
+      "• Output ONLY the final rewritten text.",
+    ].join("\n"),
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Post-processing 1 — Dash removal.
@@ -136,6 +185,88 @@ function applyUnicodeSpacing(text) {
   });
 }
 
+function maxTokensFor(text) {
+  return Math.min(4096, Math.max(256, Math.ceil(text.length / 3) + 200));
+}
+
+async function callModelPass({ systemPrompt, userText, includePenalties, signal }) {
+  const body = {
+    model: MODEL,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userText },
+    ],
+    temperature: SAMPLING.temperature,
+    top_p: SAMPLING.top_p,
+    max_tokens: maxTokensFor(userText),
+    stream: false,
+  };
+  if (includePenalties) {
+    body.frequency_penalty = SAMPLING.frequency_penalty;
+    body.presence_penalty = SAMPLING.presence_penalty;
+  }
+
+  let upstream = await fetch(`${HF_BASE_URL}/chat/completions`, {
+    method: "POST",
+    signal,
+    headers: {
+      Authorization: `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (includePenalties && (upstream.status === 400 || upstream.status === 422)) {
+    console.warn("Model rejected penalty params; retrying without them.");
+    delete body.frequency_penalty;
+    delete body.presence_penalty;
+    upstream = await fetch(`${HF_BASE_URL}/chat/completions`, {
+      method: "POST",
+      signal,
+      headers: {
+        Authorization: `Bearer ${HF_TOKEN}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  if (!upstream.ok) {
+    const detail = await upstream.text();
+    throw new Error(`upstream ${upstream.status}: ${detail}`);
+  }
+
+  const data = await upstream.json();
+  const raw = data?.choices?.[0]?.message?.content?.trim();
+  if (!raw) {
+    throw new Error("empty response");
+  }
+  return stripModelTokens(raw);
+}
+
+async function runHumanizerChain(originalText, signal) {
+  let current = originalText;
+
+  for (const pass of HUMANIZER_CHAIN) {
+    console.log(`  → Pass ${pass.id}/4: ${pass.name}`);
+    try {
+      current = await callModelPass({
+        systemPrompt: pass.prompt,
+        userText: current,
+        includePenalties: pass.includePenalties,
+        signal,
+      });
+    } catch (err) {
+      const detail = err.message || String(err);
+      throw new Error(`Pass ${pass.id} (${pass.name}) failed: ${detail}`);
+    }
+  }
+
+  return current;
+}
+
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
@@ -160,79 +291,29 @@ app.post("/api/humanize", async (req, res) => {
     });
   }
 
-  // Give the model room to match the input length (~1.4 tokens/word + headroom).
-  const maxTokens = Math.min(4096, Math.max(256, Math.ceil(text.length / 3) + 200));
-
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  // Build and send one request. Penalty params can be omitted because some
-  // HuggingFace providers reject them.
-  const callModel = (includePenalties) => {
-    const body = {
-      model: MODEL,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: text },
-      ],
-      temperature: SAMPLING.temperature,
-      top_p: SAMPLING.top_p,
-      max_tokens: maxTokens,
-      stream: false,
-    };
-    if (includePenalties) {
-      body.frequency_penalty = SAMPLING.frequency_penalty;
-      body.presence_penalty = SAMPLING.presence_penalty;
-    }
-    return fetch(`${HF_BASE_URL}/chat/completions`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        Authorization: `Bearer ${HF_TOKEN}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-  };
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS * HUMANIZER_CHAIN.length);
 
   try {
-    let upstream = await callModel(true);
-    // If the provider rejected the request over unsupported params, retry clean.
-    if (upstream.status === 400 || upstream.status === 422) {
-      console.warn("Model rejected penalty params; retrying without them.");
-      upstream = await callModel(false);
-    }
+    const raw = await runHumanizerChain(text, controller.signal);
 
-    if (!upstream.ok) {
-      const detail = await upstream.text();
-      console.error(`HuggingFace API error ${upstream.status}:`, detail);
-      return res.status(502).json({
-        error: `The language model returned an error (${upstream.status}). Please try again.`,
-      });
-    }
-
-    const data = await upstream.json();
-    const raw = data?.choices?.[0]?.message?.content?.trim();
-
-    if (!raw) {
-      return res.status(502).json({ error: "The model returned an empty response." });
-    }
-
-    // Clean model tokens -> drop invented citations -> strip dashes -> invisible spacing.
-    const cleaned = stripDashes(stripInventedCitations(stripModelTokens(raw), text));
+    // Clean invented citations -> strip dashes -> invisible spacing (final pass only).
+    const cleaned = stripDashes(stripInventedCitations(raw, text));
     const result = applyUnicodeSpacing(cleaned);
     return res.json({ result });
   } catch (err) {
     if (err.name === "AbortError") {
-      console.error("NVIDIA API request timed out.");
+      console.error("Humanizer chain timed out.");
       return res.status(504).json({
-        error: "The model took too long to respond. Try again or shorten the text.",
+        error: "The 4-pass chain took too long. Try again or shorten the text.",
       });
     }
-    console.error("Request to NVIDIA API failed:", err);
+    console.error("Humanizer chain failed:", err.message || err);
+    const passFailed = /Pass \d/.test(err.message || "");
     return res.status(502).json({
-      error: "Could not reach the language model. Check your connection and try again.",
+      error: passFailed
+        ? `The language model failed during the chain (${err.message}). Please try again.`
+        : "Could not reach the language model. Check your connection and try again.",
     });
   } finally {
     clearTimeout(timer);
@@ -244,6 +325,6 @@ app.listen(PORT, () => {
   if (!HF_TOKEN) {
     console.warn("  ⚠  HF_TOKEN is not set — add your HuggingFace token to .env before humanizing.\n");
   } else {
-    console.log(`  Model: ${MODEL} (HuggingFace)  ·  temp ${SAMPLING.temperature}\n`);
+    console.log(`  Model: ${MODEL} (HuggingFace)  ·  4-pass chain  ·  temp ${SAMPLING.temperature}\n`);
   }
 });
