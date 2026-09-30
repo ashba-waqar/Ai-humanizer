@@ -39,7 +39,7 @@ function setLoading(loading) {
   els.humanizeBtn.classList.toggle("is-loading", loading);
   els.output.classList.toggle("is-busy", loading);
   els.humanizeBtn.querySelector(".humanize-btn__label").textContent = loading
-    ? "Running 4-pass chain…"
+    ? "Rewriting… this takes a few minutes"
     : "Humanize";
 }
 

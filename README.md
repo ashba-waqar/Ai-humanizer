@@ -36,18 +36,23 @@ All sampling knobs and the prompt (including `STYLE_SAMPLE`) live at the top of 
 
 - **Backend:** Node.js + Express — keeps the API key server-side (never exposed to the browser).
 - **Frontend:** vanilla HTML/CSS/JS served from `public/`.
-- **Model:** `Qwen/Qwen2.5-7B-Instruct` via the **HuggingFace** Inference router (OpenAI-compatible). Any text-generation model on the router works — change the `MODEL` constant in `server.js` (e.g. `Qwen/Qwen2.5-72B-Instruct` for higher quality).
+- **Model:** auto-detected at startup from **NVIDIA NIM** (OpenAI-compatible endpoint). Any chat model the key can invoke works — override with `MODEL_ID` in `.env`, or change `PREFERRED_MODELS` in `server.js`.
 
 ## Setup
 
 1. Requires **Node.js 18+** (uses the built-in `fetch`).
-2. Add your HuggingFace access token to `.env`:
+2. Add your NVIDIA API key to `.env`:
 
    ```
-   HF_TOKEN=hf_...
+   NVIDIA_API_KEY=nvapi-...
    ```
 
-   Create a free token (a "Read" token is enough) at <https://huggingface.co/settings/tokens>.
+   Create a free key (with starter credits) at <https://build.nvidia.com>.
+
+   The server auto-detects a usable model at startup: it lists the catalogue,
+   then sends a tiny test call to each candidate until one answers, because
+   NVIDIA lists models a given key cannot actually invoke. To pin one
+   yourself, add `MODEL_ID=<model-id>` to `.env`.
 
 3. Install dependencies and start:
 
@@ -69,5 +74,5 @@ All sampling knobs and the prompt (including `STYLE_SAMPLE`) live at the top of 
 ```
 server.js        Express server + POST /api/humanize
 public/          Frontend (index.html, styles.css, app.js)
-.env             NVIDIA_API_KEY (git-ignored)
+.env             NVIDIA_API_KEY, optional MODEL_ID (git-ignored)
 ```
